@@ -92,9 +92,31 @@ Left to right:
 | **Tokens** | `🔤 io:1.2k cache:410.0k` | Cumulative tokens for the whole session, in two economically meaningful buckets: `io` = fresh input+output, `cache` = cache writes+reads. Summed from the transcript, so it survives multiple API turns. |
 | **MCP** | `MCP 2:5` | `servers:calls` — number of MCP servers enabled for this project and MCP tool calls made this session. **Only shown when more than one MCP server is active.** |
 | **Cost** | `💰 $1.84 (session $0.42)` | Total cost for this Claude process, and — after a `/clear` — the cost of just the conversation currently on screen. |
-| **Overage flag** | a red `$` at the end | Appears once a rate-limit window hits 100%, i.e. spend is now drawing on paid credits rather than plan quota. |
+| **Credit meter** | `$4.47 CREDITS` at the end | How much of this session's spend came out of paid usage credits rather than plan quota. Absent until a rate-limit window hits 100%. See below. |
 
-### Two design details worth knowing before you edit it
+### The credit meter
+
+The last segment answers a different question from the cost figure next to it:
+not *what has this session cost*, but *how much of that was paid credits*. It has
+three states:
+
+| State | When | Looks like |
+|---|---|---|
+| Off | No rate-limit window has maxed out yet | *nothing — the segment is absent* |
+| Counting | A window is at 100% | `$4.47 CREDITS` — bold white on a red block, ticking up live |
+| Paused | The window has room again | `$6.00 credits` — dim grey, frozen, stays put for the rest of the session |
+
+When a window hits 100% the script anchors `total_cost_usd` and counts only the
+delta from there, which is why the line can read `💰 $11.00 (session $6.00)` next
+to `$6.00 credits` — the meter started when the limit tripped, not when the
+session did, and stopped adding the moment the window reset. Dropping back into
+overage resumes counting *on top of* the accumulated figure, so a session that
+bounces in and out of the limit still shows one cumulative number.
+
+State lives in `~/.claude/.statusline-credit/<session_id>` as
+`accum anchor active`, written only on transitions and pruned after 7 days.
+
+### Three design details worth knowing before you edit it
 
 - **Cost is per-session, not per-process.** Claude Code's `total_cost_usd` keeps climbing
   across a `/clear`, but `/clear` starts a *new* session. The script records the running total
@@ -108,6 +130,13 @@ Left to right:
   takes ~2 seconds — far too slow to run on every render — so the connected-server list is
   refreshed in the background into `~/.claude/.statusline-mcp-cache`, while per-project
   enable/disable overrides from `~/.claude.json` are read fresh each render (those are cheap).
+
+- **"On credits" is inferred, not reported.** The payload carries no overage or credit flag —
+  checked directly, and it's absent even with credits enabled. A rate-limit window sitting at
+  100% is the only observable proxy, so that's what the meter latches on; if Claude Code ever
+  exposes a real flag, that's the one condition to swap out. Resumed sessions restart the
+  process cost counter at 0, which would strand the credit anchor above it — the script
+  re-anchors instead of reporting a negative.
 
 ---
 
