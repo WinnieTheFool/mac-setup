@@ -36,6 +36,8 @@ came out of paid usage credits** rather than plan quota. It has three states:
 | Counting | A window is at 100% | `$4.47 CREDITS` — bold white on a red block, ticking up live |
 | Paused | The window has room again | `$6.00 credits` — dim grey, frozen, stays put for the rest of the session |
 
+![The credit meter counting live](claude-statusline/credit-meter-active.png)
+
 The number is credit spend alone, not total spend. When a window hits 100% the
 script anchors `total_cost_usd` and counts only the delta from there, so the line
 can read `💰 $11.00 (session $6.00)` next to `$6.00 credits` — the meter started

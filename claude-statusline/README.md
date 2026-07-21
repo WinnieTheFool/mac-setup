@@ -96,6 +96,15 @@ Left to right:
 
 ### The credit meter
 
+![The credit meter counting live, with a 5-hour window at 101%](credit-meter-active.png)
+
+Above: the meter in its counting state, in the wild. Two things to notice.
+`💰 $1.22` is the whole session, `$0.96 CREDITS` is only the part billed to
+credits — the $0.26 difference is what was spent before the window maxed out.
+And Claude Code's own *"Now using usage credits"* banner is on screen at the same
+moment the badge is hot, which is a useful confirmation that the proxy this
+script latches on (see below) agrees with what Claude Code itself thinks.
+
 The last segment answers a different question from the cost figure next to it:
 not *what has this session cost*, but *how much of that was paid credits*. It has
 three states:
@@ -132,9 +141,12 @@ State lives in `~/.claude/.statusline-credit/<session_id>` as
   enable/disable overrides from `~/.claude.json` are read fresh each render (those are cheap).
 
 - **"On credits" is inferred, not reported.** The payload carries no overage or credit flag —
-  checked directly, and it's absent even with credits enabled. A rate-limit window sitting at
-  100% is the only observable proxy, so that's what the meter latches on; if Claude Code ever
-  exposes a real flag, that's the one condition to swap out. Resumed sessions restart the
+  checked directly, and it's absent even with credits enabled. A rate-limit window at 100% is
+  the only observable proxy, so that's what the meter latches on; if Claude Code ever exposes
+  a real flag, that's the one condition to swap out. The screenshot above is the best evidence
+  the proxy is sound: Claude Code's own "Now using usage credits" banner is up while the badge
+  counts. Note the window reads **101%** there — usage can overshoot, so the check is `>= 100`,
+  not `== 100`. Resumed sessions restart the
   process cost counter at 0, which would strand the credit anchor above it — the script
   re-anchors instead of reporting a negative.
 
