@@ -23,11 +23,30 @@ payload on stdin (Claude Code sends it on every render) and prints one line:
 
 Left to right: model, context-window bar, the rolling 5-hour rate-limit window
 and when it resets, token totals split into fresh input/output vs. cache, active
-MCP servers and calls, and cost. A red `$` appears at the end once a rate-limit
-window hits 100% — i.e. when spend is coming out of paid credits rather than
-plan quota.
+MCP servers and calls, and cost.
 
-Two things worth knowing if you ever edit it:
+### The credit meter
+
+Past the cost figure sits a meter that tracks **how much of this session's spend
+came out of paid usage credits** rather than plan quota. It has three states:
+
+| State | When | Looks like |
+|---|---|---|
+| Off | No rate-limit window has maxed out yet | *nothing — the segment is absent* |
+| Counting | A window is at 100% | `$4.47 CREDITS` — bold white on a red block, ticking up live |
+| Paused | The window has room again | `$6.00 credits` — dim grey, frozen, stays put for the rest of the session |
+
+The number is credit spend alone, not total spend. When a window hits 100% the
+script anchors `total_cost_usd` and counts only the delta from there, so the line
+can read `💰 $11.00 (session $6.00)` next to `$6.00 credits` — the meter started
+when the limit tripped and stopped adding when the window reset. Dropping back
+into overage resumes counting *on top of* the accumulated figure, so a session
+that bounces in and out of the limit still shows one cumulative number.
+
+State lives in `~/.claude/.statusline-credit/<session_id>` as
+`accum anchor active`, written only on transitions and pruned after 7 days.
+
+Three things worth knowing if you ever edit it:
 
 - **Cost is per-session, not per-process.** Claude Code's `total_cost_usd` keeps
   climbing across a `/clear`, but `/clear` starts a new session. The script
@@ -37,6 +56,13 @@ Two things worth knowing if you ever edit it:
 - **The MCP server list is cached for 60s** in the background, because
   `claude mcp list` does live health checks and takes ~2 seconds — far too slow
   to run on every render.
+- **"On credits" is inferred, not reported.** The payload carries no overage or
+  credit flag — checked directly, and it's absent even with credits enabled. A
+  window sitting at 100% is the only observable proxy, so that's what the meter
+  latches on. If Claude Code ever exposes a real flag, that's the one line to
+  change. Note also that a resumed session (`--continue` / `--resume`) restarts
+  the process cost counter at 0, which would strand the anchor above it; the
+  script re-anchors instead of reporting a negative.
 
 `statusline_5hr.py` is an earlier companion that computed this session's share
 of the 5-hour window by scanning transcripts on disk. **It is not wired up

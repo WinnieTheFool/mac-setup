@@ -136,18 +136,60 @@ else
   COST_STR=$(printf "💰 \$%.2f" "$COST")
 fi
 
-# Usage-credit / overage indicator: rendered in red at the end of the line
-# once a rate-limit window is fully used. The statusline payload has no
-# explicit overage/credit flag (checked directly, even with credits
-# enabled) - 100% used is the only observable proxy for "now drawing on
-# paid credits instead of plan quota".
+# Usage-credit / overage meter: how many dollars of paid credits this session
+# has burned. The statusline payload has no explicit overage/credit flag
+# (checked directly, even with credits enabled) - 100% used on a rate-limit
+# window is the only observable proxy for "now drawing on paid credits instead
+# of plan quota". So the meter is a two-state latch, persisted per session:
+#
+#   ACTIVE  - a window is maxed. Anchor .cost.total_cost_usd at the moment the
+#             latch flips on, and show (accumulated + cost - anchor) as a loud
+#             bold badge. Every dollar counted here is credit spend.
+#   PAUSED  - the window has room again, so credits are no longer being drawn.
+#             The stint's delta is folded into the accumulated total, the count
+#             freezes, and the badge drops to plain text - but it stays on
+#             screen for the rest of the session as a record of what was spent.
+#
+# Re-entering overage resumes counting on top of the accumulated total, so a
+# session that bounces in and out of the limit shows one cumulative figure.
 FIVEH_USED=$(echo "$input" | jq -r '.rate_limits.five_hour.used_percentage // 0')
 SEVEND_USED=$(echo "$input" | jq -r '.rate_limits.seven_day.used_percentage // 0')
-RED='\033[31m'
 RESET='\033[0m'
-OVERAGE_STR=""
-if awk -v a="$FIVEH_USED" -v b="$SEVEND_USED" 'BEGIN{exit !(a>=100 || b>=100)}'; then
-  OVERAGE_STR=" ${RED}\$${RESET}"
+CREDIT_HOT='\033[1;97;41m'   # bold white on red - counting, impossible to miss
+CREDIT_COLD='\033[2;37m'     # dim grey - frozen total, still visible
+CREDIT_STR=""
+if [ -n "$SESSION_ID" ]; then
+  CREDIT_DIR="$HOME/.claude/.statusline-credit"
+  CREDIT_FILE="$CREDIT_DIR/$SESSION_ID"
+  mkdir -p "$CREDIT_DIR" 2>/dev/null
+  ACCUM=0; ANCHOR=0; ACTIVE=0
+  [ -f "$CREDIT_FILE" ] && read -r ACCUM ANCHOR ACTIVE < "$CREDIT_FILE"
+  ACCUM=${ACCUM:-0}; ANCHOR=${ANCHOR:-0}; ACTIVE=${ACTIVE:-0}
+  save_credit() {
+    printf "%s %s %s\n" "$1" "$2" "$3" > "${CREDIT_FILE}.tmp" 2>/dev/null \
+      && mv "${CREDIT_FILE}.tmp" "$CREDIT_FILE" 2>/dev/null
+    find "$CREDIT_DIR" -type f -mtime +7 -delete 2>/dev/null &
+    disown 2>/dev/null
+  }
+  if awk -v a="$FIVEH_USED" -v b="$SEVEND_USED" 'BEGIN{exit !(a>=100 || b>=100)}'; then
+    # A resumed session (--continue/--resume) restarts the process cost counter
+    # at 0, stranding the anchor above it; re-anchor rather than going negative.
+    if [ "$ACTIVE" != "1" ] || awk -v c="$COST" -v a="$ANCHOR" 'BEGIN{exit !(c < a)}'; then
+      ANCHOR="$COST"; ACTIVE=1
+      save_credit "$ACCUM" "$ANCHOR" "$ACTIVE"
+    fi
+    SPENT=$(awk -v acc="$ACCUM" -v c="$COST" -v a="$ANCHOR" 'BEGIN{d = acc + c - a; print (d > 0) ? d : 0}')
+    CREDIT_STR=$(printf " ${CREDIT_HOT} \$%.2f CREDITS ${RESET}" "$SPENT")
+  else
+    if [ "$ACTIVE" = "1" ]; then
+      ACCUM=$(awk -v acc="$ACCUM" -v c="$COST" -v a="$ANCHOR" 'BEGIN{d = acc + c - a; print (d > 0) ? d : 0}')
+      ANCHOR=0; ACTIVE=0
+      save_credit "$ACCUM" "$ANCHOR" "$ACTIVE"
+    fi
+    if awk -v acc="$ACCUM" 'BEGIN{exit !(acc > 0)}'; then
+      CREDIT_STR=$(printf " ${CREDIT_COLD}\$%.2f credits${RESET}" "$ACCUM")
+    fi
+  fi
 fi
 
 OUT="[$MODEL] $BAR $PCT% (${USED_FMT}/${MAX_FMT})"
@@ -155,4 +197,4 @@ OUT="[$MODEL] $BAR $PCT% (${USED_FMT}/${MAX_FMT})"
 OUT="$OUT | $TOK_STR"
 [ -n "$MCP_STR" ] && OUT="$OUT | $MCP_STR"
 OUT="$OUT | $COST_STR"
-echo -e "${OUT}${OVERAGE_STR}"
+echo -e "${OUT}${CREDIT_STR}"
